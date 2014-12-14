@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/tresata/spark-kafka.svg?branch=master)](https://travis-ci.org/tresata/spark-kafka)
+[![Build Status](https://travis-ci.org/tresata/spark-kafka.svg?branch=tresata)](https://travis-ci.org/tresata/spark-kafka)
 
 # spark-kafka
 Spark-kafka is a library that facilitates batch loading data from Kafka into Spark, and from Spark into Kafka. 
