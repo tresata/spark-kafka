@@ -21,5 +21,6 @@ writeToKafka can also be used in Spark Streaming to save the underlying RDDs of 
 
 The unit test infrastructure was copied from/inspired by spark-streaming-kafka.
 
+
 Have fun!
 Team @ Tresata
