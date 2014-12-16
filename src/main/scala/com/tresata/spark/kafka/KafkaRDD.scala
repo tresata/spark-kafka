@@ -10,7 +10,7 @@ import org.apache.spark.util.TaskCompletionListener
 import org.I0Itec.zkclient.ZkClient
 
 import kafka.message.{ Message, MessageAndOffset, MessageSet }
-import kafka.common.{ TopicAndPartition, ErrorMapping }
+import kafka.common.{ TopicAndPartition, ErrorMapping, BrokerNotAvailableException }
 import kafka.consumer.SimpleConsumer
 import kafka.producer.{ KeyedMessage, Producer, ProducerConfig }
 import kafka.api.{ TopicMetadataRequest, OffsetRequest, PartitionOffsetRequestInfo, FetchRequestBuilder }
@@ -49,34 +49,39 @@ object KafkaRDD {
     }
   }
 
-  private def getSimpleConsumer(broker: Broker, config: SimpleConsumerConfig, clientId: String) =
+  private def getSimpleConsumer(broker: Broker, config: SimpleConsumerConfig, clientId: String): SimpleConsumer =
     new SimpleConsumer(broker.host, broker.port, config.socketTimeoutMs, config.socketReceiveBufferBytes, clientId)
 
-  private def getTopicPartitions(topic: String, broker: Broker, config: SimpleConsumerConfig): Map[Int, Option[Broker]] = {
-    val consumer = getSimpleConsumer(broker, config, "getTopicPartitions")
-    val resp = try {
-      consumer.send(new TopicMetadataRequest(Seq(topic), 0))
-    } finally {
-      consumer.close()
-    }
-    resp.topicsMetadata.head.partitionsMetadata.map{ x => (x.partitionId, x.leader.map{ b => Broker(b.host, b.port) }) }.toMap
+  private def getTopicPartitions(topic: String, consumer: SimpleConsumer): Map[Int, Option[Broker]] = {
+    val topicMeta = consumer.send(new TopicMetadataRequest(Seq(topic), 0)).topicsMetadata.head
+    ErrorMapping.maybeThrowException(topicMeta.errorCode)
+    topicMeta.partitionsMetadata.map{ partitionMeta =>
+      ErrorMapping.maybeThrowException(partitionMeta.errorCode)
+      (partitionMeta.partitionId, partitionMeta.leader.map{ b => Broker(b.host, b.port) })
+    }.toMap
   }
 
-  private def getTopicPartitions(topic: String, brokers: Seq[Broker], config: SimpleConsumerConfig): Map[Int, Option[Broker]] =
-    brokers.iterator.flatMap{ broker =>
+  private def getTopicPartitions(topic: String, brokers: Iterable[Broker], config: SimpleConsumerConfig): Map[Int, Option[Broker]] = {
+    val it = brokers.iterator.flatMap{ broker =>
+      val consumer = getSimpleConsumer(broker, config, "getTopicPartitions")
       try {
-        Some(getTopicPartitions(topic, broker, config))
+        Some(getTopicPartitions(topic, consumer))
       } catch {
         case e: ConnectException =>
           log.warn("connection failed for broker {}", broker.connectStr)
           None
+      } finally {
+        consumer.close()
       }
-    }.next
+    }
+    if (it.hasNext) it.next() else throw new BrokerNotAvailableException("operation failed for all brokers")
+  }
 
-  private def getPartitionOffset(consumer: SimpleConsumer, tap: TopicAndPartition, time: Long): Long = {
-    val partitionOffsets = consumer.getOffsetsBefore(OffsetRequest(Map(tap -> PartitionOffsetRequestInfo(time, 1)))).partitionErrorAndOffsets(tap)
-    ErrorMapping.maybeThrowException(partitionOffsets.error)
-    partitionOffsets.offsets.head
+  private def getPartitionOffset(tap: TopicAndPartition, time: Long, consumer: SimpleConsumer): Long = {
+    val partitionOffsetsResponse = consumer.getOffsetsBefore(OffsetRequest(Map(tap -> PartitionOffsetRequestInfo(time, 1))))
+      .partitionErrorAndOffsets(tap)
+    ErrorMapping.maybeThrowException(partitionOffsetsResponse.error)
+    partitionOffsetsResponse.offsets.head
   }
 
   /** Write contents of this RDD to Kafka messages by creating a Producer per partition. */
@@ -139,17 +144,17 @@ class KafkaRDD(sc: SparkContext, config: SimpleConsumerConfig, val topic: String
 
     val startOffset = offsets.getOrElse(partition, {
       log.warn("no start offset provided for partition {}, using earliest offset", partition)
-      getPartitionOffset(consumer, tap, startTime)
+      getPartitionOffset(tap, startTime, consumer)
     })
-    val stopOffset = getPartitionOffset(consumer, tap, stopTime)
+    val stopOffset = getPartitionOffset(tap, stopTime, consumer)
     log.info(s"""partition ${partition} offset range [${startOffset}, ${stopOffset})""")
 
     def fetch(offset: Long): MessageSet = {
-      log.info("fetching with offset {}", offset)
+      log.debug("fetching with offset {}", offset)
       val req = new FetchRequestBuilder().clientId(clientId).addFetch(topic, partition, offset, config.fetchMessageMaxBytes).build
       val data = consumer.fetch(req).data(tap)
       ErrorMapping.maybeThrowException(data.error)
-      log.info("retrieved {} messages", data.messages.size)
+      log.debug("retrieved {} messages", data.messages.size)
       data.messages
     }
 
@@ -161,12 +166,11 @@ class KafkaRDD(sc: SparkContext, config: SimpleConsumerConfig, val topic: String
         override def onTaskCompletion(context: TaskContext): Unit = offsetAccum += Map(kafkaSplit.partition -> offset)
       })
 
-      override def hasNext: Boolean = if (offset >= stopOffset) false else if (setIter.hasNext) true else {
-        setIter = fetch(offset).iterator
-        setIter.hasNext
-      }
+      override def hasNext: Boolean = offset < stopOffset // blindly trusting kafka here
 
       override def next(): MessageAndOffset = {
+        if (!setIter.hasNext)
+          setIter = fetch(offset).iterator
         val x = setIter.next()
         offset = x.nextOffset // is there a nicer way?
         x
