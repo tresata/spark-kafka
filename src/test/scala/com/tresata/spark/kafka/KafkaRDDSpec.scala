@@ -7,6 +7,7 @@ import java.util.{ Properties, UUID }
 
 import kafka.admin.TopicCommand
 import kafka.common.TopicAndPartition
+import kafka.api.OffsetRequest
 import kafka.producer.{ KeyedMessage, ProducerConfig, Producer }
 import kafka.utils.ZKStringSerializer
 import kafka.serializer.{ StringDecoder, StringEncoder }
@@ -89,10 +90,10 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
     it("should collect the correct messages without provided offsets") {
       val topic = "topic1"
 
-      val rdd = new KafkaRDD(sc, SimpleConsumerConfig(getConsumerConfig(zkConnect)), topic)
+      val rdd = KafkaRDD(sc, topic, OffsetRequest.EarliestTime, OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
       assert(rdd.collect.map{ pom => (pom.partition, pom.offset, byteBufferToString(pom.message.key), byteBufferToString(pom.message.payload)) }.toList ===
         List((0, 0L, "1", "a"), (0, 1L, "2", "b"), (0, 2L, null, "b"), (0, 3L, null, "c"), (0, 4L, null, "c"), (0, 5L, null, "c")))
-      assert(rdd.nextOffsets === Map(0 -> 6L))
+      assert(rdd.stopOffsets === Map(0 -> 6L))
     }
 
     it("should collect the correct messages with provided offsets") {
@@ -100,10 +101,10 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
       val sent = Map("e" -> 2)
       produceAndSendMessage(topic, sent)
 
-      val rdd = new KafkaRDD(sc, SimpleConsumerConfig(getConsumerConfig(zkConnect)), topic, Map(0 -> 6L))
+      val rdd = KafkaRDD(sc, topic, Map(0 -> 6L), OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
       assert(rdd.collect.map{ pom => (pom.partition, pom.offset, byteBufferToString(pom.message.payload)) }.toList ===
         List((0, 6L, "e"), (0, 7L, "e")))
-      assert(rdd.nextOffsets === Map(0 -> 8L))
+      assert(rdd.stopOffsets === Map(0 -> 8L))
     }
 
     it("should collect the correct messages if more than fetchSize") {
@@ -111,10 +112,10 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
 
       val send = Map("a" -> 101)
       produceAndSendMessage(topic, send)
-      val rdd = new KafkaRDD(sc, SimpleConsumerConfig(getConsumerConfig(zkConnect)), topic, Map(0 -> 8L))
+      val rdd = KafkaRDD(sc, topic, Map(0 -> 8L), OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
       val l = rdd.collect.map{ pom => (pom.partition, pom.offset, byteBufferToString(pom.message.payload)) }.toList
       assert(l.size == 101 && l.forall(_._3 == "a") && l.last == (0, 108L, "a"))
-      assert(rdd.nextOffsets === Map(0 -> 109L))
+      assert(rdd.stopOffsets === Map(0 -> 109L))
     }
   }
 
@@ -168,9 +169,9 @@ object KafkaTestUtils {
     props
   }
 
-  def getConsumerConfig(zkConnect: String): Properties = {
+  def getConsumerConfig(port: Int): Properties = {
     val props = new Properties()
-    props.put("zookeeper.connect", zkConnect)
+    props.put("metadata.broker.list", s"localhost:${port}")
     props.put("fetch.message.max.bytes", "100")
     props
   }
