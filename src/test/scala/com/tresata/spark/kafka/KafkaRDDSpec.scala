@@ -91,7 +91,7 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
       val topic = "topic1"
 
       val rdd = KafkaRDD(sc, topic, OffsetRequest.EarliestTime, OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
-      assert(rdd.collect.map{ pom => (pom.partition, pom.offset, byteBufferToString(pom.message.key), byteBufferToString(pom.message.payload)) }.toList ===
+      assert(rdd.collect.map(pomToTuple).toList ===
         List((0, 0L, "1", "a"), (0, 1L, "2", "b"), (0, 2L, null, "b"), (0, 3L, null, "c"), (0, 4L, null, "c"), (0, 5L, null, "c")))
       assert(rdd.stopOffsets === Map(0 -> 6L))
     }
@@ -102,8 +102,7 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
       produceAndSendMessage(topic, sent)
 
       val rdd = KafkaRDD(sc, topic, Map(0 -> 6L), OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
-      assert(rdd.collect.map{ pom => (pom.partition, pom.offset, byteBufferToString(pom.message.payload)) }.toList ===
-        List((0, 6L, "e"), (0, 7L, "e")))
+      assert(rdd.collect.map(pomToTuple).toList === List((0, 6L, null, "e"), (0, 7L, null, "e")))
       assert(rdd.stopOffsets === Map(0 -> 8L))
     }
 
@@ -113,8 +112,8 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
       produceAndSendMessage(topic, send)
 
       val rdd = KafkaRDD(sc, topic, Map(0 -> 8L), OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
-      val l = rdd.collect.map{ pom => (pom.partition, pom.offset, byteBufferToString(pom.message.payload)) }.toList
-      assert(l.size == 101 && l.forall(_._3 == "a") && l.last == (0, 108L, "a"))
+      val l = rdd.collect.map(pomToTuple).toList
+      assert(l.size == 101 && l.forall(_._4 == "a") && l.last == (0, 108L, null, "a"))
       assert(rdd.stopOffsets === Map(0 -> 109L))
     }
   }
@@ -123,6 +122,10 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
     val topic = "topic1"
     val rdd = KafkaRDD(sc, topic, OffsetRequest.LatestTime, OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
     assert(rdd.count == 0)
+  }
+
+  private val pomToTuple = { (pom: PartitionOffsetMessage) => 
+    (pom.partition, pom.offset, byteBufferToString(pom.message.key), byteBufferToString(pom.message.payload))
   }
 
   private def byteBufferToString(bb: ByteBuffer): String = {

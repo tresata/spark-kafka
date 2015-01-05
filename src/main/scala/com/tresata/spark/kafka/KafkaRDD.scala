@@ -113,7 +113,9 @@ object KafkaRDD {
       val leaders = partitionLeaders(topic, brokers, config)
       partitionOffsets(topic, stopTime, leaders, config)
     }, config)
-    require(startOffsets.keySet == stopOffsets.keySet, "must provide start offsets for all partitions")
+    require(stopOffsets.keySet.subsetOf(startOffsets.keySet),
+      "missing start offset for partition(s) " + (stopOffsets.keySet -- startOffsets.keySet).toList.sorted.mkString(", ")
+    )
     val offsets = stopOffsets.map{ case (partition, stopOffset) => (partition, (startOffsets(partition), stopOffset)) }
     new KafkaRDD(sc, topic, offsets, config)
   }
@@ -167,7 +169,9 @@ class KafkaRDD private (sc: SparkContext, val topic: String, val offsets: Map[In
   private val leaders = partitionLeaders(topic, brokers, config)
   log.info("leaders {}", SortedMap(leaders.toSeq: _*).mapValues(_.map(_.toString).getOrElse("?")).mkString(", "))
 
-  require(leaders.keySet == offsets.keySet, "must provide offsets for all partitions")
+  require(leaders.keySet.subsetOf(offsets.keySet),
+    "missing offsets for partition(s) " + (leaders.keySet -- offsets.keySet).toList.sorted.mkString(", ")
+  )
 
   protected def getPartitions: Array[Partition] = leaders.zipWithIndex.map{ case ((partition, leader), index) =>
     val (startOffset, stopOffset) = offsets(partition)
