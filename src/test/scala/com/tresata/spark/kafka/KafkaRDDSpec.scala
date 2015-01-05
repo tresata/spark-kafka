@@ -109,14 +109,20 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
 
     it("should collect the correct messages if more than fetchSize") {
       val topic = "topic1"
-
       val send = Map("a" -> 101)
       produceAndSendMessage(topic, send)
+
       val rdd = KafkaRDD(sc, topic, Map(0 -> 8L), OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
       val l = rdd.collect.map{ pom => (pom.partition, pom.offset, byteBufferToString(pom.message.payload)) }.toList
       assert(l.size == 101 && l.forall(_._3 == "a") && l.last == (0, 108L, "a"))
       assert(rdd.stopOffsets === Map(0 -> 109L))
     }
+  }
+
+  it("should collect no messages if stop offset is equal to or less than start offset") {
+    val topic = "topic1"
+    val rdd = KafkaRDD(sc, topic, OffsetRequest.LatestTime, OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
+    assert(rdd.count == 0)
   }
 
   private def byteBufferToString(bb: ByteBuffer): String = {
