@@ -155,6 +155,7 @@ object KafkaRDD {
 class KafkaRDD private (sc: SparkContext, val topic: String, val offsets: Map[Int, (Long, Long)], config: SimpleConsumerConfig)
     extends RDD[PartitionOffsetMessage](sc, Nil) {
   import KafkaRDD._
+  log.info("offsets {}", SortedMap(offsets.toSeq: _*).mkString(", "))
 
   def startOffsets = offsets.mapValues(_._1)
   def stopOffsets = offsets.mapValues(_._2)
