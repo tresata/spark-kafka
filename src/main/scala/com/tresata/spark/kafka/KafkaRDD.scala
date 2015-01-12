@@ -159,8 +159,8 @@ class KafkaRDD private (sc: SparkContext, val topic: String, val offsets: Map[In
   import KafkaRDD._
   log.info("offsets {}", SortedMap(offsets.toSeq: _*).mkString(", "))
 
-  def startOffsets = offsets.mapValues(_._1)
-  def stopOffsets = offsets.mapValues(_._2)
+  def startOffsets: Map[Int, Long] = offsets.mapValues(_._1)
+  def stopOffsets: Map[Int, Long] = offsets.mapValues(_._2)
 
   private val props = config.props.props
 
