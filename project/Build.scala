@@ -24,7 +24,9 @@ object ProjectBuild extends Build {
           exclude("jline", "jline"),
         "org.apache.spark" %% "spark-core" % "1.1.0" % "provided",
         "org.slf4j" % "slf4j-log4j12" % "1.6.6" % "test",
-        "org.scalatest" %% "scalatest" % "2.2.0" % "test"
+        "org.scalatest" %% "scalatest" % "2.2.0" % "test",
+        "org.apache.spark" % "spark-streaming-kafka" % "1.1.0" % "compile",
+        "org.apache.commons" % "commons-pool2" % "2.2" % "compile"
       ),
       publishMavenStyle := true,
       pomIncludeRepository := { x => false },

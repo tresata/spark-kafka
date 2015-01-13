@@ -16,31 +16,13 @@ import kafka.api.{ TopicMetadataRequest, OffsetRequest, PartitionOffsetRequestIn
 
 import org.slf4j.LoggerFactory
 
-private object Broker {
-  def apply(s: String): Broker = s.split(":") match {
-    case Array(host) => Broker(host, 9092)
-    case Array(host, port) => Broker(host, port.toInt)
-  }
-}
-
-case class Broker(host: String, port: Int) {
-  override def toString: String = host + ":" + port
-}
-
-private class KafkaPartition(rddId: Int, override val index: Int, val partition: Int, val startOffset: Long, val stopOffset: Long, val leader: Option[Broker])
-    extends Partition {
-  override def hashCode: Int = 41 * (41 + rddId) + index
-}
-
-case class PartitionOffsetMessage(partition: Int, offset: Long, message: Message)
-
-object KafkaRDD {
+object KafkaOffsetRDD {
   private val log = LoggerFactory.getLogger(getClass)
 
-  private def simpleConsumer(broker: Broker, config: SimpleConsumerConfig): SimpleConsumer =
+  private[kafka] def simpleConsumer(broker: Broker, config: SimpleConsumerConfig): SimpleConsumer =
     new SimpleConsumer(broker.host, broker.port, config.socketTimeoutMs, config.socketReceiveBufferBytes, config.clientId)
 
-  private def partitionLeaders(topic: String, consumer: SimpleConsumer): Map[Int, Option[Broker]] = {
+  private[kafka] def partitionLeaders(topic: String, consumer: SimpleConsumer): Map[Int, Option[Broker]] = {
     val topicMeta = consumer.send(new TopicMetadataRequest(Seq(topic), 0)).topicsMetadata.head
     ErrorMapping.maybeThrowException(topicMeta.errorCode)
     topicMeta.partitionsMetadata.map{ partitionMeta =>
@@ -49,7 +31,7 @@ object KafkaRDD {
     }.toMap
   }
 
-  private def partitionLeaders(topic: String, brokers: Iterable[Broker], config: SimpleConsumerConfig): Map[Int, Option[Broker]] = {
+  private[kafka] def partitionLeaders(topic: String, brokers: Iterable[Broker], config: SimpleConsumerConfig): Map[Int, Option[Broker]] = {
     val it = Random.shuffle(brokers).take(5).iterator.flatMap{ broker =>
       val consumer = simpleConsumer(broker, config)
       try {
@@ -65,14 +47,14 @@ object KafkaRDD {
     if (it.hasNext) it.next() else throw new BrokerNotAvailableException("operation failed for all brokers")
   }
 
-  private def partitionOffset(tap: TopicAndPartition, time: Long, consumer: SimpleConsumer): Long = {
+  private[kafka] def partitionOffset(tap: TopicAndPartition, time: Long, consumer: SimpleConsumer): Long = {
     val partitionOffsetsResponse = consumer.getOffsetsBefore(OffsetRequest(Map(tap -> PartitionOffsetRequestInfo(time, 1))))
       .partitionErrorAndOffsets(tap)
     ErrorMapping.maybeThrowException(partitionOffsetsResponse.error)
     partitionOffsetsResponse.offsets.head
   }
 
-  private def partitionOffsets(topic: String, time: Long, leaders: Map[Int, Option[Broker]], config: SimpleConsumerConfig): Map[Int, Long] =
+  private[kafka] def partitionOffsets(topic: String, time: Long, leaders: Map[Int, Option[Broker]], config: SimpleConsumerConfig): Map[Int, Long] =
     leaders.par.map{
       case (partition, None) =>
         throw new LeaderNotAvailableException(s"no leader for partition ${partition}")
@@ -85,7 +67,7 @@ object KafkaRDD {
         }
     }.seq
 
-  private def retryIfNoLeader[E](e: => E, config: SimpleConsumerConfig): E = {
+  private[kafka] def retryIfNoLeader[E](e: => E, config: SimpleConsumerConfig): E = {
     def sleep() {
       log.warn("sleeping for {} ms", config.refreshLeaderBackoffMs)
       Thread.sleep(config.refreshLeaderBackoffMs)
@@ -98,17 +80,17 @@ object KafkaRDD {
         case ex: ConnectException => sleep(); attempt(e, nr + 1)
       }
     } else e
-    
+
     attempt(e)
   }
 
-  private def brokerList(config: SimpleConsumerConfig): List[Broker] =
+  private[kafka] def brokerList(config: SimpleConsumerConfig): List[Broker] =
     config.metadataBrokerList.split(",").toList.map(Broker.apply)
 
-  def apply(sc: SparkContext, topic: String, offsets: Map[Int, (Long, Long)], config: SimpleConsumerConfig): KafkaRDD =
-    new KafkaRDD(sc, topic, offsets, config.props.props)
+  def apply(sc: SparkContext, topic: String, offsets: Map[Int, (Long, Long)], config: SimpleConsumerConfig): KafkaOffsetRDD =
+    new KafkaOffsetRDD(sc, topic, offsets, config.props.props)
 
-  def apply(sc: SparkContext, topic: String, startOffsets: Map[Int, Long], stopTime: Long, config: SimpleConsumerConfig): KafkaRDD = {
+  def apply(sc: SparkContext, topic: String, startOffsets: Map[Int, Long], stopTime: Long, config: SimpleConsumerConfig): KafkaOffsetRDD = {
     val brokers = brokerList(config)
     val stopOffsets = retryIfNoLeader({
       val leaders = partitionLeaders(topic, brokers, config)
@@ -116,27 +98,28 @@ object KafkaRDD {
     }, config)
     require(startOffsets.keySet == stopOffsets.keySet, "must provide start offsets for all partitions")
     val offsets = stopOffsets.map{ case (partition, stopOffset) => (partition, (startOffsets(partition), stopOffset)) }
-    new KafkaRDD(sc, topic, offsets, config.props.props)
+    sc.makeRDD(offsets.toSeq)
+    new KafkaOffsetRDD(sc, topic, offsets, config.props.props)
   }
 
-  def apply(sc: SparkContext, topic: String, startOffsets: Map[Int, Long], startTime: Long, stopTime: Long, config: SimpleConsumerConfig): KafkaRDD = {
+  def apply(sc: SparkContext, topic: String, startOffsets: Map[Int, Long], startTime: Long, stopTime: Long, config: SimpleConsumerConfig): KafkaOffsetRDD = {
     val brokers = brokerList(config)
     val (startElseOffsets, stopOffsets) = retryIfNoLeader({
       val leaders = partitionLeaders(topic, brokers, config)
       (partitionOffsets(topic, startTime, leaders, config), partitionOffsets(topic, stopTime, leaders, config))
     }, config)
     val offsets = startElseOffsets.map{ case (partition, startOffset) => (partition, (startOffsets.getOrElse(partition,startOffset), stopOffsets(partition))) }
-    new KafkaRDD(sc, topic, offsets, config.props.props)
+    new KafkaOffsetRDD(sc, topic, offsets, config.props.props)
   }
 
-  def apply(sc: SparkContext, topic: String, startTime: Long, stopTime: Long, config: SimpleConsumerConfig): KafkaRDD = {
+  def apply(sc: SparkContext, topic: String, startTime: Long, stopTime: Long, config: SimpleConsumerConfig): KafkaOffsetRDD = {
     val brokers = brokerList(config)
     val (startOffsets, stopOffsets) = retryIfNoLeader({
       val leaders = partitionLeaders(topic, brokers, config)
       (partitionOffsets(topic, startTime, leaders, config), partitionOffsets(topic, stopTime, leaders, config))
     }, config)
     val offsets = startOffsets.map{ case (partition, startOffset) => (partition, (startOffset, stopOffsets(partition))) }
-    new KafkaRDD(sc, topic, offsets, config.props.props)
+    new KafkaOffsetRDD(sc, topic, offsets, config.props.props)
   }
 
   /** Write contents of this RDD to Kafka messages by creating a Producer per partition. */
@@ -163,13 +146,11 @@ object KafkaRDD {
   }
 }
 
-class KafkaRDD private[kafka] (@transient sc: SparkContext, val topic: String, val offsets: Map[Int, (Long, Long)], props: Properties)
-    extends RDD[PartitionOffsetMessage](sc, Nil) {
-  import KafkaRDD._
+class KafkaOffsetRDD private (@transient sc: SparkContext, val topic: String, val offsets: Map[Int, (Long, Long)], props: Properties)
+    extends RDD[(Int, (Long, Long))](sc, Nil) {
+  import KafkaOffsetRDD._
   log.info("offsets {}", SortedMap(offsets.toSeq: _*).mkString(", "))
 
-  def startOffsets = offsets.mapValues(_._1)
-  def stopOffsets = offsets.mapValues(_._2)
 
 
   private val brokers = brokerList(SimpleConsumerConfig(props))
@@ -187,60 +168,27 @@ class KafkaRDD private[kafka] (@transient sc: SparkContext, val topic: String, v
 
   override def getPreferredLocations(split: Partition): Seq[String] = split.asInstanceOf[KafkaPartition].leader.map(_.host).toSeq
 
-  def compute(split: Partition, context: TaskContext): Iterator[PartitionOffsetMessage] = {
+  def compute(split: Partition, context: TaskContext): Iterator[(Int, (Long, Long))] = {
     val kafkaSplit = split.asInstanceOf[KafkaPartition]
-    val partition = kafkaSplit.partition
-    val tap = TopicAndPartition(topic, partition)
-    val startOffset = kafkaSplit.startOffset
-    val stopOffset = kafkaSplit.stopOffset
     val config = SimpleConsumerConfig(props)
-    log.info(s"partition ${partition} offset range [${startOffset}, ${stopOffset})")
-
     def sleep() {
       log.warn("sleeping for {} ms", config.refreshLeaderBackoffMs)
       Thread.sleep(config.refreshLeaderBackoffMs)
     }
 
     try {
-      // every task reads from a single broker
-      // on the first attempt we use the lead broker determined in the driver, on next attempts we ask for the lead broker ourselves
-      // note this is currently broken since attemptId is not what i think it is. fix is in:
-      // https://github.com/apache/spark/pull/3849
-      val broker = (if (context.attemptId == 0) kafkaSplit.leader else None)
-        .orElse(partitionLeaders(topic, brokers, config)(partition))
-        .getOrElse(throw new LeaderNotAvailableException(s"no leader for partition ${partition}"))
-      log.info("reading from leader {}", broker)
 
-      // this is the consumer that reads from the broker
-      // the consumer is always closed upon task completion
-      val consumer = simpleConsumer(broker, config)
-      context.addTaskCompletionListener(_ => consumer.close())
 
-      def fetch(offset: Long): MessageSet = {
-        log.debug("fetching with offset {}", offset)
-        val req = new FetchRequestBuilder().clientId(config.clientId).addFetch(topic, partition, offset, config.fetchMessageMaxBytes).build
-        val data = consumer.fetch(req).data(tap)
-        ErrorMapping.maybeThrowException(data.error)
-        log.debug("fetched {} messages", data.messages.size)
-        data.messages
-      }
+      new Iterator[(Int, (Long, Long))] {
+        private var used = false
+        override def hasNext: Boolean = !used
 
-      new Iterator[MessageAndOffset] {
-        private var offset = startOffset
-        private var setIter = fetch(offset).iterator
-
-        override def hasNext: Boolean = offset < stopOffset // blindly trusting kafka here
-
-        override def next(): MessageAndOffset = {
-          if (!setIter.hasNext)
-            setIter = fetch(offset).iterator
-          val x = setIter.next()
-          offset = x.nextOffset // is there a nicer way?
-          x
+        override def next(): (Int, (Long, Long)) = {
+          used = true
+          val offset = offsets.get(kafkaSplit.partition).get
+          (kafkaSplit.partition, (kafkaSplit.startOffset, kafkaSplit.stopOffset))
         }
       }
-        .filter(_.offset >= startOffset) // is this necessary?
-        .map{ mao => PartitionOffsetMessage(partition, mao.offset, mao.message) }
     } catch {
       case e: LeaderNotAvailableException => sleep(); throw e
       case e: NotLeaderForPartitionException => sleep(); throw e

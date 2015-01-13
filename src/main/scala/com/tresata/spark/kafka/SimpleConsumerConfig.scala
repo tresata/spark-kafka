@@ -15,7 +15,7 @@ object SimpleConsumerConfig {
   val RefreshLeaderMaxRetries = 4
 }
 
-class SimpleConsumerConfig private (val props: VerifiableProperties) {
+class SimpleConsumerConfig private (val props: VerifiableProperties){
   import SimpleConsumerConfig._
 
   /** the socket timeout for network requests. Its value should be at least fetch.wait.max.ms. */
