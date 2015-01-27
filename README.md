@@ -3,8 +3,6 @@
 # spark-kafka
 Spark-kafka is a library that facilitates batch loading data from Kafka into Spark, and from Spark into Kafka. 
 
-This library does not provide a Kafka Input DStream for Spark Streaming. For that please take a look at the spark-streaming-kafka library that is part of Spark itself.
-
 ## SimpleConsumerConfig
 This is the configuration that KafkaRDD needs to consume data from Kafka. It includes metadata.broker.list (a comma-separated list of Kafka brokers for bootstrapping) and some SimpleConsumer related settings such as timeouts and buffer sizes. Only metadata.broker.list is required.
 
@@ -20,6 +18,12 @@ The KafkaRDD companion object contains methods writeWithKeysToKafka and writeToK
 writeToKafka can also be used in Spark Streaming to save the underlying RDDs of the DStream to Kafka (using foreachRDD method on the DStream). However keep in mind that for every invocation of writeToKafka a new Kafka Producer is created for every partition.
 
 The unit test infrastructure was copied from/inspired by spark-streaming-kafka.
+
+# KafkaInputDStream
+KafkaInputDStream is a inputDStream for Spark Streaming to provide exactly-once message delivery semantics. It intents to addresses some problems in spark-streaming-kafka library provided by Spark as following:
+1. Spark Receiver can't be restarted after it died. Our KafkaInputDStream doesn't extend from ReceiverInputDStream.
+2. https://issues.apache.org/jira/browse/SPARK-3146
+3. Known issues in Spark Streaming section of http://www.michael-noll.com/blog/2014/10/01/kafka-spark-streaming-integration-example-tutorial/
 
 Have fun!
 Team @ Tresata
