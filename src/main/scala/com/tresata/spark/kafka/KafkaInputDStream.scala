@@ -17,8 +17,7 @@ import scala.collection.mutable
  * Created by vincentye on 12/18/14.
  */
 private class KafkaInputDStream(@transient val ssc_ : StreamingContext, val config: Properties, val topic: String, val startOffsets: mutable.Map[Int, Long] = mutable.Map.empty,
-                        startTime: Long = OffsetRequest.EarliestTime,
-                        val commit: (Map[Int, Long])=>Unit = offsets => println(s"committing offsets: ${offsets.toString()}")) extends InputDStream[(Int, (Long, Long))](ssc_){
+                        startTime: Long = OffsetRequest.EarliestTime) extends InputDStream[(Int, (Long, Long))](ssc_){
   override def start(): Unit = {
 //    context.addStreamingListener(new StreamingListener{
 //      override def onBatchCompleted(batchCompleted: StreamingListenerBatchCompleted): Unit = {
@@ -31,13 +30,8 @@ private class KafkaInputDStream(@transient val ssc_ : StreamingContext, val conf
 
 //  private val offsetAccum: Accumulator[Map[Int, Long]] = ssc_.sparkContext.accumulator(offsets)(OffsetAccumulatorParam)
 
-  val offsetsMap:mutable.Map[Long, Map[Int, (Long, Long)]] = mutable.Map.empty
+//  val offsetsMap:mutable.Map[Long, Map[Int, (Long, Long)]] = mutable.Map.empty
   @transient lazy val simpleConfig: SimpleConsumerConfig = {
-    context.addStreamingListener(new StreamingListener{
-      override def onBatchCompleted(batchCompleted: StreamingListenerBatchCompleted): Unit = {
-        offsetsMap.get(batchCompleted.batchInfo.batchTime.milliseconds).foreach(v => commit(v.mapValues(_._2)))
-      }
-    })
     SimpleConsumerConfig(config)
   }
 
@@ -53,7 +47,7 @@ private class KafkaInputDStream(@transient val ssc_ : StreamingContext, val conf
 
 //    val ret = Some(KafkaOffsetRDD(ssc_.sparkContext, topic, startOffsets.toMap, startTime, OffsetRequest.LatestTime, simpleConfig))
     startOffsets ++= offsets.mapValues(_._2)
-    offsetsMap += (validTime.milliseconds -> offsets)
+//    offsetsMap += (validTime.milliseconds -> offsets)
 //    ret
     this.log.info(s"offsets RDD: ${offsets}")
     Some(context.sparkContext.makeRDD(offsets.toSeq, 1))
@@ -62,17 +56,16 @@ private class KafkaInputDStream(@transient val ssc_ : StreamingContext, val conf
 
 
 object KafkaInputDStream {
-  private def updateFunc(partitionOffset: Seq[(Long, Long)], state: Option[(Long, Long)]): Option[(Long, Long)] = {
-    state.map(state => (state._2, Math.max(partitionOffset.head._2, state._2))).orElse(partitionOffset.headOption)
+  private def updateFunc(partitionOffset: Seq[(Long, Long)], state: Option[(Long, Long)])(implicit maxMessages: Int): Option[(Long, Long)] = {
+    state.map(state => (state._2, Math.max(Math.min(partitionOffset.head._2, state._2 + maxMessages), state._2))).orElse(partitionOffset.headOption.map{ case (start, stop) => (start, Math.min(stop, start + maxMessages))})
   }
 
   private def simpleConsumer(broker: Broker, config: SimpleConsumerConfig): SimpleConsumer =
     new SimpleConsumer(broker.host, broker.port, config.socketTimeoutMs, config.socketReceiveBufferBytes, config.clientId)
 
   def apply(@transient ssc_ : StreamingContext, config: Properties, topic: String, nextOffsets: mutable.Map[Int, Long] = mutable.Map.empty,
-            startTime: Long = OffsetRequest.EarliestTime,
-            commit: (Map[Int, Long])=>Unit = offsets => println(s"committing offsets: ${offsets.toString()}")): DStream[PartitionOffsetMessage] = {
-    new KafkaInputDStream(ssc_, config, topic, nextOffsets, startTime, commit)
+            startTime: Long = OffsetRequest.EarliestTime)(implicit maxMessages: Int): DStream[PartitionOffsetMessage] = {
+    new KafkaInputDStream(ssc_, config, topic, nextOffsets, startTime)
       .updateStateByKey(updateFunc _, 1)
       .transform(rdd =>
           new KafkaRDD(rdd.sparkContext, topic, rdd.collect().toMap, config)
@@ -93,6 +86,7 @@ object KafkaInputDStream {
       () => {
         val ssc = new StreamingContext(sConf, Seconds(10))
         ssc.checkpoint("/tmp/KafkaInputDStream")
+        implicit val maxMessages = 10
         val dstream = KafkaInputDStream(ssc, kafkaProps, "impressionsAvroStream",  startTime = OffsetRequest.LatestTime)
 
         dstream.count().print()
