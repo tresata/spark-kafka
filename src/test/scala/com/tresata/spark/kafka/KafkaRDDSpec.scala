@@ -37,6 +37,7 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
     .setMaster("local")
     .setAppName("test")
     .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+    .set("spark.ui.enabled", "false")
 
   protected var zookeeper: EmbeddedZookeeper = _
   protected var zkClient: ZkClient = _
