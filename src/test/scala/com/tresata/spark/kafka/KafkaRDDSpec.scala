@@ -4,13 +4,13 @@ import java.io.{ File, IOException }
 import java.nio.ByteBuffer
 import java.net.InetSocketAddress
 import java.util.{ Properties, UUID }
+import scala.concurrent.duration._
 
-import kafka.admin.TopicCommand
-import kafka.common.TopicAndPartition
+import kafka.admin.AdminUtils
 import kafka.api.OffsetRequest
 import kafka.producer.{ KeyedMessage, ProducerConfig, Producer }
 import kafka.utils.ZKStringSerializer
-import kafka.serializer.{ StringDecoder, StringEncoder }
+import kafka.serializer.StringEncoder
 import kafka.server.{ KafkaConfig, KafkaServer }
 
 import org.I0Itec.zkclient.ZkClient
@@ -21,8 +21,9 @@ import org.apache.zookeeper.server.NIOServerCnxnFactory
 import org.apache.spark.{ SparkConf, SparkContext }
 
 import org.scalatest.{ FunSpec, BeforeAndAfterAll }
+import org.scalatest.concurrent.Eventually
 
-class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
+class KafkaRDDSpec extends FunSpec with Eventually with BeforeAndAfterAll {
   import KafkaTestUtils._
 
   val zkConnect = "localhost:2181"
@@ -42,7 +43,6 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
   protected var zookeeper: EmbeddedZookeeper = _
   protected var zkClient: ZkClient = _
   protected var server: KafkaServer = _
-  protected var producer: Producer[String, String] = _
   protected var sc: SparkContext = _
 
   override def beforeAll {
@@ -62,7 +62,6 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
   override def afterAll {
     sc.stop()
 
-    producer.close()
     server.shutdown()
     brokerConf.logDirs.foreach { f => deleteRecursively(new File(f)) }
 
@@ -117,12 +116,12 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
       assert(l.size == 101 && l.forall(_._4 == "a") && l.last == (0, 108L, null, "a"))
       assert(rdd.stopOffsets === Map(0 -> 109L))
     }
-  }
 
-  it("should collect no messages if stop offset is equal to or less than start offset") {
-    val topic = "topic1"
-    val rdd = KafkaRDD(sc, topic, OffsetRequest.LatestTime, OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
-    assert(rdd.count == 0)
+    it("should collect no messages if stop offset is equal to or less than start offset") {
+      val topic = "topic1"
+      val rdd = KafkaRDD(sc, topic, OffsetRequest.LatestTime, OffsetRequest.LatestTime, SimpleConsumerConfig(getConsumerConfig(brokerPort)))
+      assert(rdd.count == 0)
+    }
   }
 
   private val pomToTuple = { (pom: PartitionOffsetMessage) => 
@@ -140,22 +139,39 @@ class KafkaRDDSpec extends FunSpec with BeforeAndAfterAll {
 
   private def createTestMessage(topic: String, sent: Map[String, Int])
     : Seq[KeyedMessage[String, String]] = {
-    val messages = for ((s, freq) <- sent; i <- 0 until freq) yield {
+    (for ((s, freq) <- sent; i <- 0 until freq) yield {
       new KeyedMessage[String, String](topic, s)
-    }
-    messages.toSeq
+    }).toSeq
   }
 
   def createTopic(topic: String) {
-    TopicCommand.createTopic(zkClient, new TopicCommand.TopicCommandOptions(Array("--topic", topic, "--partitions", "1", "--replication-factor", "1")))
-    // wait until metadata is propagated
-    waitUntilMetadataIsPropagated(Seq(server), topic, 0, 1000)
+    AdminUtils.createTopic(zkClient, topic, 1, 1)
+    waitUntilMetadataIsPropagated(Seq(server), topic, 0)
   }
 
   def produceAndSendMessage(topic: String, sent: Map[String, Int]) {
     val brokerAddr = brokerConf.hostName + ":" + brokerConf.port
-    producer = new Producer[String, String](new ProducerConfig(getProducerConfig(brokerAddr)))
+    val producer = new Producer[String, String](new ProducerConfig(getProducerConfig(brokerAddr)))
     producer.send(createTestMessage(topic, sent): _*)
+    producer.close()
+    Thread.sleep(1000)
+  }
+
+  def waitUntilMetadataIsPropagated(servers: Seq[KafkaServer], topic: String, partition: Int): Int = {
+    var leader: Int = -1
+    eventually(timeout(1000 milliseconds), interval(100 milliseconds)) {
+      assert(servers.foldLeft(true) {
+        (result, server) =>
+        val partitionStateOpt = server.apis.metadataCache.getPartitionInfo(topic, partition)
+        partitionStateOpt match {
+          case None => false
+          case Some(partitionState) =>
+            leader = partitionState.leaderIsrAndControllerEpoch.leaderAndIsr.leader
+            result && leader >= 0 // is valid broker id
+        }
+      }, s"Partition [$topic, $partition] metadata not propagated after timeout")
+    }
+    leader
   }
 }
 
@@ -184,28 +200,6 @@ object KafkaTestUtils {
     props.put("metadata.broker.list", s"localhost:${port}")
     props.put("fetch.message.max.bytes", "100")
     props
-  }
-
-  def waitUntilTrue(condition: () => Boolean, waitTime: Long): Boolean = {
-    val startTime = System.currentTimeMillis()
-    while (true) {
-      if (condition())
-        return true
-      if (System.currentTimeMillis() > startTime + waitTime)
-        return false
-      Thread.sleep(waitTime.min(100L))
-    }
-    // Should never go to here
-    throw new RuntimeException("unexpected error")
-  }
-
-  def waitUntilMetadataIsPropagated(servers: Seq[KafkaServer], topic: String, partition: Int, timeout: Long) {
-    assert(waitUntilTrue({ () =>
-      servers.foldLeft(true){ (state, server) =>
-        val topicMetaData = server.apis.metadataCache.getTopicMetadata(Set(topic))
-        state && (topicMetaData.size > 0) && (topicMetaData.head.partitionsMetadata.size > 0)
-      }
-    }, timeout), s"Partition [$topic, $partition] metadata not propagated after timeout")
   }
 
   def deleteRecursively(file: File) {
@@ -279,6 +273,8 @@ object KafkaTestUtils {
     val factory = new NIOServerCnxnFactory()
     factory.configure(new InetSocketAddress(ip, port), 16)
     factory.startup(zookeeper)
+
+    val actualPort = factory.getLocalPort
 
     def shutdown() {
       factory.shutdown()
