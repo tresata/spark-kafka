@@ -198,9 +198,7 @@ class KafkaRDD private (sc: SparkContext, val topic: String, val offsets: Map[In
     try {
       // every task reads from a single broker
       // on the first attempt we use the lead broker determined in the driver, on next attempts we ask for the lead broker ourselves
-      // note this is currently broken since attemptId is not what i think it is. fix is in:
-      // https://github.com/apache/spark/pull/3849
-      val broker = (if (context.attemptId == 0) kafkaSplit.leader else None)
+      val broker = (if (context.attemptNumber == 0) kafkaSplit.leader else None)
         .orElse(partitionLeaders(topic, brokers, config)(partition))
         .getOrElse(throw new LeaderNotAvailableException(s"no leader for partition ${partition}"))
       log.info("reading from leader {}", broker)
