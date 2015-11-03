@@ -9,7 +9,7 @@ object ProjectBuild extends Build {
     settings = Project.defaultSettings ++ graphSettings ++ Seq(
       name := "spark-kafka",
       organization := "com.tresata",
-      version := "0.6.0-SNAPSHOT",
+      version := "0.6.0",
       scalaVersion := "2.10.4",
       crossScalaVersions := Seq("2.10.4", "2.11.7"),
       javacOptions ++= Seq("-Xlint:unchecked", "-source", "1.7", "-target", "1.7"),
