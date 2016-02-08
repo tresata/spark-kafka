@@ -1,17 +1,17 @@
 import sbt._
 import sbt.Keys._
-import net.virtualvoid.sbt.graph.Plugin._
 
 object ProjectBuild extends Build {
   lazy val project = Project(
     id = "root",
-    base = file("."),
-    settings = Project.defaultSettings ++ graphSettings ++ Seq(
+    base = file(".")
+  ).settings(
+    Seq(
       name := "spark-kafka",
       organization := "com.tresata",
       version := "0.7.0-SNAPSHOT",
-      scalaVersion := "2.10.4",
-      crossScalaVersions := Seq("2.10.4", "2.11.7"),
+      scalaVersion := "2.10.5",
+      crossScalaVersions := Seq("2.10.5", "2.11.7"),
       javacOptions ++= Seq("-Xlint:unchecked", "-source", "1.7", "-target", "1.7"),
       scalacOptions ++= Seq("-unchecked", "-deprecation", "-target:jvm-1.7"),
       libraryDependencies ++= Seq(
@@ -25,7 +25,7 @@ object ProjectBuild extends Build {
           exclude("jline", "jline"),
         "org.apache.spark" %% "spark-core" % "1.6.0" % "provided",
         "org.slf4j" % "slf4j-log4j12" % "1.7.5" % "test",
-        "org.scalatest" %% "scalatest" % "2.2.5" % "test"
+        "org.scalatest" %% "scalatest" % "2.2.6" % "test"
       ),
       publishMavenStyle := true,
       pomIncludeRepository := { x => false },
