@@ -23,7 +23,7 @@ object ProjectBuild extends Build {
           exclude("javax.jms", "jms")
           exclude("javax.mail", "mail")
           exclude("jline", "jline"),
-        "org.apache.spark" %% "spark-core" % "1.6.0" % "provided",
+        "org.apache.spark" %% "spark-core" % "1.6.1" % "provided",
         "org.slf4j" % "slf4j-log4j12" % "1.7.5" % "test",
         "org.scalatest" %% "scalatest" % "2.2.6" % "test"
       ),
