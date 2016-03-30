@@ -10,7 +10,7 @@ object ProjectBuild extends Build {
       name := "spark-kafka",
       organization := "com.tresata",
       version := "0.8.0-SNAPSHOT",
-      scalaVersion := "2.10.5",
+      scalaVersion := "2.11.7",
       crossScalaVersions := Seq("2.10.5", "2.11.7"),
       javacOptions ++= Seq("-Xlint:unchecked", "-source", "1.7", "-target", "1.7"),
       scalacOptions ++= Seq("-unchecked", "-deprecation", "-target:jvm-1.7"),
