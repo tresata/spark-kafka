@@ -10,8 +10,8 @@ object ProjectBuild extends Build {
       name := "spark-kafka",
       organization := "com.tresata",
       version := "0.8.0-SNAPSHOT",
-      scalaVersion := "2.11.7",
-      crossScalaVersions := Seq("2.10.5", "2.11.7"),
+      scalaVersion := "2.11.8",
+      crossScalaVersions := Seq("2.10.6", "2.11.8"),
       javacOptions ++= Seq("-Xlint:unchecked", "-source", "1.7", "-target", "1.7"),
       scalacOptions ++= Seq("-unchecked", "-deprecation", "-target:jvm-1.7"),
       libraryDependencies ++= Seq(
@@ -23,7 +23,7 @@ object ProjectBuild extends Build {
           exclude("javax.jms", "jms")
           exclude("javax.mail", "mail")
           exclude("jline", "jline"),
-        "org.apache.spark" %% "spark-core" % "1.6.1" % "provided",
+        "org.apache.spark" %% "spark-core" % "2.0.0" % "provided",
         "org.slf4j" % "slf4j-log4j12" % "1.7.5" % "test",
         "org.scalatest" %% "scalatest" % "2.2.6" % "test"
       ),
