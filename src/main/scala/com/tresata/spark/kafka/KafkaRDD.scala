@@ -26,8 +26,13 @@ private case class Broker(host: String, port: Int) {
   override def toString: String = host + ":" + port
 }
 
-private class KafkaPartition(rddId: Int, override val index: Int, val partition: Int, val startOffset: Long, val stopOffset: Long, val leader: Option[Broker])
+private class KafkaPartition(val rddId: Int, override val index: Int, val partition: Int, val startOffset: Long, val stopOffset: Long, val leader: Option[Broker])
     extends Partition {
+  override def equals(other: Any): Boolean = other match {
+    case kp: KafkaPartition => rddId == kp.rddId && index == kp.index
+    case _ => false
+  }
+
   override def hashCode: Int = 41 * (41 + rddId) + index
 }
 
