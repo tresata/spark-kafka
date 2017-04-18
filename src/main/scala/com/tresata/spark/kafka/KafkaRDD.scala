@@ -157,6 +157,19 @@ object KafkaRDD {
   def writeToKafka[V](rdd: RDD[V], topic: String, config: ProducerConfig) {
     writeWithKeysToKafka[V, V](rdd.map((null.asInstanceOf[V], _)), topic, config)
   }
+
+  /** Returns two Maps (PartitionId -> Offset) containing smallest and largests offsets for each partition**/
+  def smallestAndLargestOffsets(topic: String, config: SimpleConsumerConfig): (Map[Int, Long], Map[Int, Long]) = {
+    val brokers = brokerList(config)
+
+    retryIfNoLeader({
+      val leaders = partitionLeaders(topic, brokers, config)
+
+      (partitionOffsets(topic, OffsetRequest.EarliestTime, leaders, config),
+        partitionOffsets(topic, OffsetRequest.LatestTime, leaders, config))
+    }, config)
+  }
+
 }
 
 class KafkaRDD private (sc: SparkContext, val topic: String, val offsets: Map[Int, (Long, Long)], config: SimpleConsumerConfig)
