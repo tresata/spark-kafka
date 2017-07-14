@@ -15,7 +15,7 @@ lazy val root = (project in file(".")).settings(
       exclude("javax.jms", "jms")
       exclude("javax.mail", "mail")
       exclude("jline", "jline"),
-    "org.apache.spark" %% "spark-core" % "2.1.0" % "provided",
+    "org.apache.spark" %% "spark-core" % "2.2.0" % "provided",
     "org.slf4j" % "slf4j-log4j12" % "1.7.5" % "test",
     "org.scalatest" %% "scalatest" % "2.2.6" % "test"
   ),
