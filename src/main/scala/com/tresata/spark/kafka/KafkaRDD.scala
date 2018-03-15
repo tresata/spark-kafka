@@ -192,7 +192,7 @@ class KafkaRDD private (sc: SparkContext, val topic: String, val offsets: Map[In
     "missing offsets for partition(s) " + (leaders.keySet -- offsets.keySet).toList.sorted.mkString(", ")
   )
 
-  protected def getPartitions: Array[Partition] = leaders.zipWithIndex.map{ case ((partition, leader), index) =>
+  protected def getPartitions: Array[Partition] = leaders.toSeq.sortBy(_._1).zipWithIndex.map{ case ((partition, leader), index) =>
     val (startOffset, stopOffset) = offsets(partition)
     new KafkaPartition(id, index, partition, startOffset, stopOffset, leader)
   }.toArray
