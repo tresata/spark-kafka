@@ -1,3 +1,5 @@
+# NOTE: this project is no longer updated or maintained
+
 [![Build Status](https://travis-ci.org/tresata/spark-kafka.svg?branch=master)](https://travis-ci.org/tresata/spark-kafka)
 
 # spark-kafka
